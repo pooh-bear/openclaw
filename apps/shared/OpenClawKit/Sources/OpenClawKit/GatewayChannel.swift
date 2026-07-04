@@ -128,7 +128,7 @@ func requestWithHeaders(url: URL, headers: [String: String]) -> URLRequest {
     }
     if let cookieURL, let cookies = HTTPCookieStorage.shared.cookies(for: cookieURL), !cookies.isEmpty {
         let cookieHeader = HTTPCookie.requestHeaderFields(with: cookies)
-        let cookieNames = cookies.map(&\.name).sorted()
+        let cookieNames = cookies.map { $0.name }.sorted()
         Logger(subsystem: "ai.openclaw", category: "gateway").info("ws upgrade cookies=\(cookieNames, privacy: .public) from \(cookieURL.absoluteString, privacy: .public)")
         for (field, value) in cookieHeader {
             // Custom headers take priority over cookie-sourced headers.
