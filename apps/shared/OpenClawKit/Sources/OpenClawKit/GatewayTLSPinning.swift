@@ -286,7 +286,7 @@ URLSessionTaskDelegate, GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrust
     // Cancel HTTP redirects for WebSocket tasks so reverse-proxy auth challenges
     // (e.g., Cloudflare Access 302) surface as clear HTTP errors instead of following
     // the redirect to an HTML login page and failing with -1011 "bad server response".
-    func urlSession(
+    public func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
