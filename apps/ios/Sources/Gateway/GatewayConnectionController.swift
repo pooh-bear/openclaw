@@ -832,6 +832,11 @@ final class GatewayConnectionController {
             uniquingKeysWith: { _, new in new })
         let effectiveTLS: GatewayTLSParams? =
             GatewaySettingsStore.loadGatewaySkipTLSPinning() ? nil : tls
+        let headerKeys = additionalHeaders.keys.sorted()
+        GatewayDiagnostics.log(
+            "gateway connect auth=\(token != nil ? "token" : password != nil ? "password" : "none")"
+            + " skipTLSPinning=\(effectiveTLS == nil)"
+            + " customHeaders=\(headerKeys)")
         Task { [weak self, weak appModel] in
             guard let self, let appModel else { return }
             if forceReconnect {
