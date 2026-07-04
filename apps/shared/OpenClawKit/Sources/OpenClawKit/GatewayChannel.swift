@@ -96,6 +96,50 @@ extension WebSocketSessioning {
     }
 }
 
+/// Build a URLRequest for a WebSocket upgrade that includes both explicit custom
+/// headers and cookies from the shared HTTPCookieStorage.
+///
+/// URLSessionWebSocketTask is documented to attach cookies from the session
+/// configuration's httpCookieStorage, but Secure cookies may not match wss://
+/// URLs on some iOS versions. Manually inlining the Cookie header on the
+/// URLRequest guarantees delivery regardless of cookie-storage scheme matching.
+func requestWithHeaders(url: URL, headers: [String: String]) -> URLRequest {
+    var request = URLRequest(url: url)
+    for (field, value) in headers {
+        request.setValue(value, forHTTPHeaderField: field)
+    }
+    // Inline cookies from the shared store so they reach the server even if
+    // URLSessionWebSocketTask skips Secure cookies on wss:// URLs.
+    // Try the original URL first (covers https://); fall back to converting
+    // wss:// → https:// so Secure cookies match.
+    let cookieURL: URL?
+    if url.scheme == "wss" {
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        comps?.scheme = "https"
+        if comps?.port == 443 { comps?.port = nil }
+        cookieURL = comps?.url
+    } else if url.scheme == "ws" {
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        comps?.scheme = "http"
+        if comps?.port == 80 { comps?.port = nil }
+        cookieURL = comps?.url
+    } else {
+        cookieURL = url
+    }
+    if let cookieURL, let cookies = HTTPCookieStorage.shared.cookies(for: cookieURL), !cookies.isEmpty {
+        let cookieHeader = HTTPCookie.requestHeaderFields(with: cookies)
+        let cookieNames = cookies.map(&\.name).sorted()
+        Logger(subsystem: "ai.openclaw", category: "gateway").info("ws upgrade cookies=\(cookieNames, privacy: .public) from \(cookieURL.absoluteString, privacy: .public)")
+        for (field, value) in cookieHeader {
+            // Custom headers take priority over cookie-sourced headers.
+            if request.value(forHTTPHeaderField: field) == nil {
+                request.setValue(value, forHTTPHeaderField: field)
+            }
+        }
+    }
+    return request
+}
+
 /// A minimal URLSession delegate that cancels HTTP redirects for WebSocket tasks.
 ///
 /// When connecting through a reverse proxy like Cloudflare Access, the proxy may
@@ -116,15 +160,12 @@ final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, We
     }()
 
     public func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
-        Self.boxed(self.session.webSocketTask(with: url))
+        let request = requestWithHeaders(url: url, headers: [:])
+        return Self.boxed(self.session.webSocketTask(with: request))
     }
 
     public func makeWebSocketTask(url: URL, headers: [String: String]) -> WebSocketTaskBox {
-        guard !headers.isEmpty else { return self.makeWebSocketTask(url: url) }
-        var request = URLRequest(url: url)
-        for (field, value) in headers {
-            request.setValue(value, forHTTPHeaderField: field)
-        }
+        let request = requestWithHeaders(url: url, headers: headers)
         return Self.boxed(self.session.webSocketTask(with: request))
     }
 
@@ -162,15 +203,12 @@ final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, We
 
 extension URLSession: WebSocketSessioning {
     public func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
-        Self.boxed(self.webSocketTask(with: url))
+        let request = requestWithHeaders(url: url, headers: [:])
+        return Self.boxed(self.webSocketTask(with: request))
     }
 
     public func makeWebSocketTask(url: URL, headers: [String: String]) -> WebSocketTaskBox {
-        guard !headers.isEmpty else { return self.makeWebSocketTask(url: url) }
-        var request = URLRequest(url: url)
-        for (field, value) in headers {
-            request.setValue(value, forHTTPHeaderField: field)
-        }
+        let request = requestWithHeaders(url: url, headers: headers)
         return Self.boxed(self.webSocketTask(with: request))
     }
 

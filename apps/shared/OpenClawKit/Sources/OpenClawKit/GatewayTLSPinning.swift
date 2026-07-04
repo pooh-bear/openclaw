@@ -208,15 +208,12 @@ URLSessionTaskDelegate, GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrust
     }
 
     public func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
-        Self.boxed(self.session.webSocketTask(with: url))
+        let request = requestWithHeaders(url: url, headers: [:])
+        return Self.boxed(self.session.webSocketTask(with: request))
     }
 
     public func makeWebSocketTask(url: URL, headers: [String: String]) -> WebSocketTaskBox {
-        guard !headers.isEmpty else { return self.makeWebSocketTask(url: url) }
-        var request = URLRequest(url: url)
-        for (field, value) in headers {
-            request.setValue(value, forHTTPHeaderField: field)
-        }
+        let request = requestWithHeaders(url: url, headers: headers)
         return Self.boxed(self.session.webSocketTask(with: request))
     }
 
