@@ -166,7 +166,7 @@ public enum GatewayTLSStore {
 }
 
 public final class GatewayTLSPinningSession: NSObject, WebSocketSessioning, URLSessionDelegate,
-GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrustProviding, @unchecked Sendable {
+URLSessionTaskDelegate, GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrustProviding, @unchecked Sendable {
     private let params: GatewayTLSParams
     private let failureLock = NSLock()
     private var lastTLSFailure: GatewayTLSValidationFailure?
@@ -281,6 +281,19 @@ GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrustProviding, @unchecked Se
                 systemTrustOk: false))
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
+    }
+
+    // Cancel HTTP redirects for WebSocket tasks so reverse-proxy auth challenges
+    // (e.g., Cloudflare Access 302) surface as clear HTTP errors instead of following
+    // the redirect to an HTML login page and failing with -1011 "bad server response".
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void)
+    {
+        completionHandler(nil)
     }
 }
 

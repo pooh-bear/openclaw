@@ -161,4 +161,25 @@ struct GatewayReverseProxyAuthTests {
         #expect(session.headerVariantCalls >= 1)
         #expect(session.capturedHeaders["Authorization"] == "Bearer token123")
     }
+
+    @Test
+    func `redirect blocking session cancels HTTP redirects`() {
+        let session = GatewayRedirectBlockingSession()
+        // Simulate a 302 redirect from CF Access.
+        let response = HTTPURLResponse(
+            url: URL(string: "wss://example.test/")!,
+            statusCode: 302, httpVersion: "HTTP/1.1",
+            headerFields: ["Location": "https://login.example.test/"])!
+        let request = URLRequest(url: URL(string: "https://login.example.test/")!)
+        var redirectCancelled = false
+        session.urlSession(
+            URLSession.shared,
+            task: URLSession.shared.dataTask(with: URL(string: "https://example.test/")!),
+            willPerformHTTPRedirection: response,
+            newRequest: request) { request in
+            // completionHandler(nil) cancels the redirect.
+            redirectCancelled = request == nil
+        }
+        #expect(redirectCancelled)
+    }
 }

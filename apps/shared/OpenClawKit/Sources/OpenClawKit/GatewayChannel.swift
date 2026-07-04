@@ -96,6 +96,56 @@ extension WebSocketSessioning {
     }
 }
 
+/// A minimal URLSession delegate that cancels HTTP redirects for WebSocket tasks.
+///
+/// When connecting through a reverse proxy like Cloudflare Access, the proxy may
+/// return a 302 redirect to a login page when service token headers are missing
+/// or invalid. Without this delegate, URLSession follows that redirect, gets HTML
+/// back instead of a 101 WebSocket upgrade, and fails with a confusing -1011
+/// "bad server response" error. Cancelling the redirect yields the original HTTP
+/// status (e.g., 302 or 403) which is far more diagnostic.
+///
+/// TLS pinning sessions already have a delegate; this class is used for the
+/// fallback session when skipTLSPinning is on.
+final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, WebSocketSessioning, @unchecked Sendable {
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+
+    public func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
+        Self.boxed(self.session.webSocketTask(with: url))
+    }
+
+    public func makeWebSocketTask(url: URL, headers: [String: String]) -> WebSocketTaskBox {
+        guard !headers.isEmpty else { return self.makeWebSocketTask(url: url) }
+        var request = URLRequest(url: url)
+        for (field, value) in headers {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        return Self.boxed(self.session.webSocketTask(with: request))
+    }
+
+    private static func boxed(_ task: URLSessionWebSocketTask) -> WebSocketTaskBox {
+        task.maximumMessageSize = 16 * 1024 * 1024
+        return WebSocketTaskBox(task: task)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void)
+    {
+        // Cancel all HTTP redirects so WebSocket tasks get the original response
+        // (e.g., 302/403 from a reverse proxy) instead of following to an HTML login
+        // page and failing with a confusing -1011 "bad server response".
+        completionHandler(nil)
+    }
+}
+
 extension URLSession: WebSocketSessioning {
     public func makeWebSocketTask(url: URL) -> WebSocketTaskBox {
         Self.boxed(self.webSocketTask(with: url))
@@ -325,7 +375,12 @@ public actor GatewayChannelActor {
         self.bootstrapToken = bootstrapToken
         self.password = password
         self.additionalHeaders = additionalHeaders
-        self.session = session?.session ?? URLSession(configuration: .default)
+        // When no TLS-pinning session is provided, use a redirect-blocking session
+        // so reverse-proxy auth challenges (e.g., Cloudflare Access 302) surface as
+        // clear HTTP errors instead of following the redirect and failing with -1011.
+        // The session delegate must outlive the URLSession so the delegate stays alive.
+        let fallbackSession = GatewayRedirectBlockingSession()
+        self.session = session?.session ?? fallbackSession
         self.pushHandler = pushHandler
         self.connectOptions = connectOptions
         self.disconnectHandler = disconnectHandler
@@ -411,6 +466,8 @@ public actor GatewayChannelActor {
         defer { self.isConnecting = false }
 
         self.task?.cancel(with: .goingAway, reason: nil)
+        let headerKeys = self.additionalHeaders.keys.sorted()
+        self.logger.info("ws upgrade headers=\(headerKeys, privacy: .public)")
         self.task = self.session.makeWebSocketTask(url: self.url, headers: self.additionalHeaders)
         self.task?.resume()
         do {
