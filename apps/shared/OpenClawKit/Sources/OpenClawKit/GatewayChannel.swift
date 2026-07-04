@@ -658,16 +658,20 @@ public actor GatewayChannelActor {
         // 302 response (which carries CF_Authorization) instead of the final 200
         // (which only carries CF_Session from the origin).
         request.httpShouldHandleCookies = false
-        let preflightSession = GatewayRedirectBlockingSession()
+        // Use a delegate that captures the 302 redirect response (with
+        // CF_Authorization) before following it. URLSession.shared follows
+        // redirects by default, but the redirect response's Set-Cookie headers
+        // are stripped before we see them. By capturing the redirect response
+        // via the delegate, we can parse CF_Authorization before it's lost.
+        let preflightDelegate = PreflightRedirectCaptureDelegate()
         do {
-            let (_, response) = try await preflightSession.session.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let (_, response) = try await URLSession.shared.data(for: request, delegate: preflightDelegate)
+            // Use the redirect response (which has CF_Authorization) if available,
+            // otherwise use the final response.
+            let effectiveResponse = preflightDelegate.redirectResponse ?? response
+            let status = (effectiveResponse as? HTTPURLResponse)?.statusCode ?? -1
             self.logger.info("proxy preflight status=\(status, privacy: .public) url=\(preflightURL.absoluteString, privacy: .public)")
-            // Extract CF_Authorization from Set-Cookie headers directly.
-            // CF Access sets CF_Authorization on the 302 response; by cancelling
-            // the redirect we see that response instead of the final 200.
-            if let httpResponse = response as? HTTPURLResponse {
-                // Log the Set-Cookie value (truncated for privacy) to diagnose parsing.
+            if let httpResponse = effectiveResponse as? HTTPURLResponse {
                 if let setCookie = httpResponse.allHeaderFields["Set-Cookie"] {
                     let desc = String(describing: setCookie)
                     let prefix = String(desc.prefix(200))
@@ -711,6 +715,29 @@ public actor GatewayChannelActor {
         }
         return nil
     }
+
+
+/// URLSessionTaskDelegate that captures the redirect response's headers so we can
+/// extract CF_Authorization from the 302 before URLSession follows it.
+/// URLSession.data(for:) follows redirects and only returns the final response,
+/// stripping the redirect's Set-Cookie. By capturing the redirect response via
+/// the delegate, we get the 302's headers before they're lost.
+final class PreflightRedirectCaptureDelegate: NSObject, URLSessionTaskDelegate {
+    var redirectResponse: HTTPURLResponse?
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void)
+    {
+        // Capture the redirect response for Set-Cookie extraction.
+        self.redirectResponse = response
+        // Follow the redirect so URLSession gets the final 200 response.
+        completionHandler(request)
+    }
+}
 
     private func sendConnect() async throws {
         let platform = InstanceIdentity.platformString

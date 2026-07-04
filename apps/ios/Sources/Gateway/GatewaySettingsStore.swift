@@ -236,19 +236,26 @@ enum GatewaySettingsStore {
             let data = json.data(using: .utf8),
             let dict = try? JSONDecoder().decode([String: String].self, from: data)
         else { return [:] }
-        // Drop entries with empty keys on load (defensive; save already filters them).
-        return dict.filter { !$0.key.isEmpty }
+        // Trim whitespace from keys and drop empty keys (defensive; save already
+        // trims and filters, but user-edited Keychain data may have stale spaces).
+        return dict.compactMapValues { value in
+            let trimmedKey = $0.key.trimmingCharacters(in: .whitespaces)
+            guard !trimmedKey.isEmpty else { return nil }
+            return (trimmedKey, value)
+        }
     }
 
     static func saveGatewayCustomHeaders(_ headers: [String: String], instanceId: String) {
-        let filtered = headers.filter { !$0.key.isEmpty }
+        // Trim whitespace from keys and drop entries with empty keys.
+        let filtered = headers.map { ($0.key.trimmingCharacters(in: .whitespaces), $0.value) }
+            .filter { !$0.0.isEmpty }
         if filtered.isEmpty {
             _ = KeychainStore.delete(
                 service: self.gatewayService,
                 account: self.gatewayCustomHeadersAccount(instanceId: instanceId))
             return
         }
-        guard let data = try? JSONEncoder().encode(filtered),
+        guard let data = try? JSONEncoder().encode(Dictionary(uniqueKeysWithValues: filtered)),
               let json = String(data: data, encoding: .utf8)
         else { return }
         _ = KeychainStore.saveString(
