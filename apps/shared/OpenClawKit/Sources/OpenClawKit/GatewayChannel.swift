@@ -637,6 +637,19 @@ public actor GatewayChannelActor {
             let (_, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             self.logger.info("proxy preflight status=\(status, privacy: .public) url=\(preflightURL.absoluteString, privacy: .public)")
+            // Log cookies set by the pre-flight so we can diagnose missing cookies.
+            let allCookies = HTTPCookieStorage.shared.cookies(for: preflightURL) ?? []
+            let cookieNames = allCookies.map { $0.name }.sorted()
+            self.logger.info("proxy preflight cookies=\(cookieNames, privacy: .public) domain=\(preflightURL.host ?? "nil", privacy: .public)")
+            // Also log response Set-Cookie headers for debugging storage issues.
+            if let httpResponse = response as? HTTPURLResponse {
+                // allHeaderFields may combine Set-Cookie values with commas.
+                // Check for both single and combined formats.
+                if let setCookieValue = httpResponse.allHeaderFields["Set-Cookie"] as? String {
+                    let count = setCookieValue.components(separatedBy: ", ").filter { $0.contains("=") }.count
+                    self.logger.info("proxy preflight set-cookie-raw-count=\(count, privacy: .public)")
+                }
+            }
         } catch {
             self.logger.info("proxy preflight error=\(error.localizedDescription, privacy: .public)")
         }
