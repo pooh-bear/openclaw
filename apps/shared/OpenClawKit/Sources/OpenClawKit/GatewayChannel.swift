@@ -664,10 +664,12 @@ public actor GatewayChannelActor {
             // iOS HTTPCookieStorage may reject SameSite=None cookies without
             // a Domain attribute, so we parse the header ourselves.
             if let httpResponse = response as? HTTPURLResponse {
-                let headerKeys = httpResponse.allHeaderFields.keys
-                    .map { String(describing: $0) }
-                    .sorted()
-                self.logger.info("proxy preflight response-headers=\(headerKeys, privacy: .public)")
+                // Log the Set-Cookie value (truncated for privacy) to diagnose parsing.
+                if let setCookie = httpResponse.allHeaderFields["Set-Cookie"] {
+                    let desc = String(describing: setCookie)
+                    let prefix = String(desc.prefix(200))
+                    self.logger.info("proxy preflight set-cookie-raw=\(prefix, privacy: .public)")
+                }
                 self.proxyCookie = Self.parseSetCookieAuthorization(httpResponse.allHeaderFields)
                 if let proxyCookie = self.proxyCookie {
                     self.logger.info("proxy preflight extracted cookie \(proxyCookie.name, privacy: .public)")
