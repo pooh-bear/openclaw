@@ -652,9 +652,10 @@ public actor GatewayChannelActor {
         for (field, value) in self.additionalHeaders {
             request.setValue(value, forHTTPHeaderField: field)
         }
-        // When service token headers are valid, CF Access authenticates directly
-        // (200 + CF_Authorization cookie) without redirecting.
-        request.httpShouldHandleCookies = true
+        // Disable automatic cookie handling so URLSession leaves Set-Cookie
+        // headers in allHeaderFields. We parse CF_Authorization ourselves because
+        // HTTPCookieStorage rejects SameSite=None cookies without a Domain attribute.
+        request.httpShouldHandleCookies = false
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
