@@ -108,6 +108,7 @@ extension WebSocketSessioning {
 /// TLS pinning sessions already have a delegate; this class is used for the
 /// fallback session when skipTLSPinning is on.
 final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, WebSocketSessioning, @unchecked Sendable {
+    private let logger = Logger(subsystem: "ai.openclaw", category: "gateway")
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
@@ -142,7 +143,20 @@ final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, We
         // Cancel all HTTP redirects so WebSocket tasks get the original response
         // (e.g., 302/403 from a reverse proxy) instead of following to an HTML login
         // page and failing with a confusing -1011 "bad server response".
+        self.logger.info("ws redirect blocked status=\(response.statusCode, privacy: .public) url=\(response.url?.absoluteString ?? "nil", privacy: .public)")
         completionHandler(nil)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: (any Error)?)
+    {
+        if let response = task.response as? HTTPURLResponse {
+            self.logger.info("ws task completed status=\(response.statusCode, privacy: .public) url=\(response.url?.absoluteString ?? "nil", privacy: .public) error=\(error?.localizedDescription ?? "none", privacy: .public)")
+        } else if let error {
+            self.logger.info("ws task completed no-response error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 }
 

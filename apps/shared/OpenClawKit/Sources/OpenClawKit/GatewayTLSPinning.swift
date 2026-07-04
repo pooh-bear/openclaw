@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OSLog
 import Security
 
 public struct GatewayTLSParams: Sendable {
@@ -167,6 +168,7 @@ public enum GatewayTLSStore {
 
 public final class GatewayTLSPinningSession: NSObject, WebSocketSessioning, URLSessionDelegate,
 URLSessionTaskDelegate, GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrustProviding, @unchecked Sendable {
+    private let logger = Logger(subsystem: "ai.openclaw", category: "gateway")
     private let params: GatewayTLSParams
     private let failureLock = NSLock()
     private var lastTLSFailure: GatewayTLSValidationFailure?
@@ -293,7 +295,20 @@ URLSessionTaskDelegate, GatewayTLSFailureProviding, GatewayDeviceTokenRetryTrust
         newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void)
     {
+        self.logger.info("ws redirect blocked status=\(response.statusCode, privacy: .public) url=\(response.url?.absoluteString ?? "nil", privacy: .public)")
         completionHandler(nil)
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: (any Error)?)
+    {
+        if let response = task.response as? HTTPURLResponse {
+            self.logger.info("ws task completed status=\(response.statusCode, privacy: .public) url=\(response.url?.absoluteString ?? "nil", privacy: .public) error=\(error?.localizedDescription ?? "none", privacy: .public)")
+        } else if let error {
+            self.logger.info("ws task completed no-response error=\(error.localizedDescription, privacy: .public)")
+        }
     }
 }
 
