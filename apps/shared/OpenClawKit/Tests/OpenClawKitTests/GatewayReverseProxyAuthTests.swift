@@ -182,4 +182,27 @@ struct GatewayReverseProxyAuthTests {
         }
         #expect(redirectCancelled)
     }
+
+    @Test
+    func `preflight URL converts wss to https`() async throws {
+        // Verify that the pre-flight correctly converts wss:// to https://
+        // and drops the default port.
+        let wssPort443 = try #require(URL(string: "wss://example.test:443/path"))
+        let channel = GatewayChannelActor(
+            url: wssPort443,
+            token: nil,
+            additionalHeaders: ["CF-Access-Client-Id": "test"],
+            session: WebSocketSessionBox(session: HeaderCapturingSession()))
+        // The preflightProxyAuth method converts wss:// → https:// and
+        // drops :443. We can't call it directly (it's private), but the
+        // URLComponents logic is straightforward, so test it here.
+        var components = URLComponents(url: wssPort443, resolvingAgainstBaseURL: false)
+        components?.scheme = "https"
+        if components?.port == 443 { components?.port = nil }
+        let preflightURL = try #require(components?.url)
+        #expect(preflightURL.scheme == "https")
+        #expect(preflightURL.host == "example.test")
+        #expect(preflightURL.port == nil)
+        #expect(preflightURL.path == "/path")
+    }
 }

@@ -482,6 +482,18 @@ public actor GatewayChannelActor {
         self.task?.cancel(with: .goingAway, reason: nil)
         let headerKeys = self.additionalHeaders.keys.sorted()
         self.logger.info("ws upgrade headers=\(headerKeys, privacy: .public)")
+
+        // When custom headers are present (e.g., CF-Access-Client-Id/Secret for
+        // Cloudflare Access), make a pre-flight HTTPS request to set any
+        // authentication cookies. Some reverse proxies require a cookie exchange
+        // before accepting WebSocket connections — the first request authenticates
+        // via service token headers and sets an authorization cookie (e.g.,
+        // CF_Authorization); the subsequent WebSocket upgrade includes that cookie
+        // automatically via the shared HTTPCookieStorage.
+        if !self.additionalHeaders.isEmpty {
+            await self.preflightProxyAuth()
+        }
+
         self.task = self.session.makeWebSocketTask(url: self.url, headers: self.additionalHeaders)
         self.task?.resume()
         do {
@@ -547,6 +559,48 @@ public actor GatewayChannelActor {
             } catch {
                 // Avoid spamming logs; the reconnect paths will surface meaningful errors.
             }
+        }
+    }
+
+    /// Make a pre-flight HTTPS request to set reverse-proxy authentication
+    /// cookies before the WebSocket upgrade. Some proxies (e.g., Cloudflare Access)
+    /// authenticate service token headers on the first request and set a session
+    /// cookie (CF_Authorization); the WebSocket upgrade must carry that cookie.
+    /// Uses URLSession.shared so the cookie lands in HTTPCookieStorage.shared,
+    /// which the default URLSessionConfiguration also reads.
+    private func preflightProxyAuth() async {
+        // Convert wss:// → https:// (or ws:// → http://) for the pre-flight.
+        var components = URLComponents(url: self.url, resolvingAgainstBaseURL: false)
+        if components?.scheme == "wss" {
+            components?.scheme = "https"
+        } else if components?.scheme == "ws" {
+            components?.scheme = "http"
+        }
+        // Drop any explicit port that matches the default for the new scheme.
+        if components?.port == 443 && components?.scheme == "https" {
+            components?.port = nil
+        } else if components?.port == 80 && components?.scheme == "http" {
+            components?.port = nil
+        }
+        guard let preflightURL = components?.url else {
+            self.logger.info("proxy preflight: could not build https URL from \(self.url.absoluteString, privacy: .public)")
+            return
+        }
+        var request = URLRequest(url: preflightURL)
+        for (field, value) in self.additionalHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        // When service token headers are valid, CF Access authenticates directly
+        // (200 + CF_Authorization cookie) without redirecting. URLSession.shared
+        // follows redirects, but the cookie is only set on the correct domain
+        // when CF Access responds with 200.
+        request.httpShouldHandleCookies = true
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            self.logger.info("proxy preflight status=\(status, privacy: .public) url=\(preflightURL.absoluteString, privacy: .public)")
+        } catch {
+            self.logger.info("proxy preflight error=\(error.localizedDescription, privacy: .public)")
         }
     }
 
