@@ -52,6 +52,7 @@ struct SettingsProTab: View {
     @State var gatewayProxyUsername = ""
     @State var gatewayProxyPassword = ""
     @State var customHeaders: [CustomHeaderEntry] = []
+    @AppStorage("gateway.skipTLSPinning") var skipTLSPinning: Bool = false
     @State var manualGatewayPortText = ""
     @State var setupStatusText: String?
     @State var stagedGatewaySetupLink: GatewayConnectDeepLink?

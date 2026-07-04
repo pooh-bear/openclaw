@@ -879,6 +879,7 @@ extension SettingsProTab {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                self.settingsButtonToggle("Skip Certificate Pinning", isOn: self.$skipTLSPinning)
                 Button(role: .destructive) {
                     self.showResetOnboardingAlert = true
                 } label: {

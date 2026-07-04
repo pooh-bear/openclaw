@@ -821,6 +821,8 @@ final class GatewayConnectionController {
         // Reverse-proxy auth (if configured) is applied to every connect path through
         // here, so all callers pick it up without threading it individually. Custom
         // headers override Basic auth on key collision (escape hatch for advanced users).
+        // When skipTLSPinning is on, bypass certificate pinning entirely (trust system
+        // roots only); used for reverse proxies like Cloudflare Access that rotate certs.
         let proxyInstanceId = GatewaySettingsStore.currentInstanceID()
         var additionalHeaders = GatewayProxyAuth.basicAuthHeaders(
             username: GatewaySettingsStore.loadGatewayProxyUsername(instanceId: proxyInstanceId),
@@ -828,6 +830,8 @@ final class GatewayConnectionController {
         additionalHeaders.merge(
             GatewaySettingsStore.loadGatewayCustomHeaders(instanceId: proxyInstanceId),
             uniquingKeysWith: { _, new in new })
+        let effectiveTLS: GatewayTLSParams? =
+            GatewaySettingsStore.loadGatewaySkipTLSPinning() ? nil : tls
         Task { [weak self, weak appModel] in
             guard let self, let appModel else { return }
             if forceReconnect {
@@ -837,7 +841,7 @@ final class GatewayConnectionController {
             let cfg = GatewayConnectConfig(
                 url: url,
                 stableID: gatewayStableID,
-                tls: tls,
+                tls: effectiveTLS,
                 token: token,
                 bootstrapToken: bootstrapToken,
                 password: password,

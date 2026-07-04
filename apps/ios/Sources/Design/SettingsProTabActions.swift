@@ -340,6 +340,7 @@ extension SettingsProTab {
         self.setupStatusText = nil
         self.setupCode = ""
         self.gatewayAutoConnect = false
+        self.skipTLSPinning = false
         self.suppressCredentialPersist = true
         defer { self.suppressCredentialPersist = false }
         self.gatewayToken = ""

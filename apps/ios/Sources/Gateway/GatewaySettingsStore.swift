@@ -16,6 +16,7 @@ enum GatewaySettingsStore {
     private static let lastGatewayStableIDDefaultsKey = "gateway.last.stableID"
     private static let clientIdOverrideDefaultsPrefix = "gateway.clientIdOverride."
     private static let selectedAgentDefaultsPrefix = "gateway.selectedAgentId."
+    private static let skipTLSPinningDefaultsKey = "gateway.skipTLSPinning"
 
     private static let instanceIdAccount = "instanceId"
     private static let preferredGatewayStableIDAccount = "preferredStableID"
@@ -254,6 +255,18 @@ enum GatewaySettingsStore {
             json,
             service: self.gatewayService,
             account: self.gatewayCustomHeadersAccount(instanceId: instanceId))
+    }
+
+    /// When enabled, TLS certificate pinning is bypassed for all gateway connections.
+    /// The system trust store is still validated (untrusted certificates are rejected),
+    /// but pinned fingerprint comparison is skipped. This is needed for reverse proxies
+    /// like Cloudflare Access that rotate certificates frequently.
+    static func loadGatewaySkipTLSPinning() -> Bool {
+        UserDefaults.standard.bool(forKey: self.skipTLSPinningDefaultsKey)
+    }
+
+    static func saveGatewaySkipTLSPinning(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: self.skipTLSPinningDefaultsKey)
     }
 
     enum LastGatewayConnection: Equatable {
