@@ -173,6 +173,9 @@ extension SettingsProTab {
         self.gatewayPassword = GatewaySettingsStore.loadGatewayPassword(instanceId: trimmedInstanceId) ?? ""
         self.gatewayProxyUsername = GatewaySettingsStore.loadGatewayProxyUsername(instanceId: trimmedInstanceId) ?? ""
         self.gatewayProxyPassword = GatewaySettingsStore.loadGatewayProxyPassword(instanceId: trimmedInstanceId) ?? ""
+        self.customHeaders = GatewaySettingsStore.loadGatewayCustomHeaders(instanceId: trimmedInstanceId)
+            .sorted(by: { $0.key < $1.key })
+            .map { CustomHeaderEntry(key: $0.key, value: $0.value) }
     }
 
     func connect(_ gateway: GatewayDiscoveryModel.DiscoveredGateway) async {
@@ -343,6 +346,7 @@ extension SettingsProTab {
         self.gatewayPassword = ""
         self.gatewayProxyUsername = ""
         self.gatewayProxyPassword = ""
+        self.customHeaders = []
         GatewayOnboardingReset.reset(appModel: self.appModel, instanceId: self.instanceId)
         self.onboardingComplete = false
         self.hasConnectedOnce = false
@@ -503,6 +507,18 @@ extension SettingsProTab {
             username: self.gatewayProxyUsername,
             password: self.gatewayProxyPassword,
             instanceId: instanceId)
+    }
+
+    /// Persist custom headers as a JSON dictionary. Empty-key entries are dropped
+    /// before saving because they are invalid HTTP header names.
+    func persistGatewayCustomHeaders() {
+        guard !self.suppressCredentialPersist else { return }
+        let instanceId = self.instanceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instanceId.isEmpty else { return }
+        let dict = Dictionary(uniqueKeysWithValues:
+            self.customHeaders.map { entry in (entry.key, entry.value) }
+                .filter { !$0.0.isEmpty })
+        GatewaySettingsStore.saveGatewayCustomHeaders(dict, instanceId: instanceId)
     }
 
     func openNotificationSettings() {

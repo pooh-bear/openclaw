@@ -818,12 +818,16 @@ final class GatewayConnectionController {
     {
         guard let appModel else { return }
         appModel.gatewayStatusText = "Connecting…"
-        // Reverse-proxy Basic auth (if configured) is applied to every connect path
-        // through here, so all callers pick it up without threading it individually.
+        // Reverse-proxy auth (if configured) is applied to every connect path through
+        // here, so all callers pick it up without threading it individually. Custom
+        // headers override Basic auth on key collision (escape hatch for advanced users).
         let proxyInstanceId = GatewaySettingsStore.currentInstanceID()
-        let additionalHeaders = GatewayProxyAuth.basicAuthHeaders(
+        var additionalHeaders = GatewayProxyAuth.basicAuthHeaders(
             username: GatewaySettingsStore.loadGatewayProxyUsername(instanceId: proxyInstanceId),
             password: GatewaySettingsStore.loadGatewayProxyPassword(instanceId: proxyInstanceId))
+        additionalHeaders.merge(
+            GatewaySettingsStore.loadGatewayCustomHeaders(instanceId: proxyInstanceId),
+            uniquingKeysWith: { _, new in new })
         Task { [weak self, weak appModel] in
             guard let self, let appModel else { return }
             if forceReconnect {

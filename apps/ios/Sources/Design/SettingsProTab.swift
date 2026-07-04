@@ -1,6 +1,14 @@
 import OpenClawKit
 import SwiftUI
 
+/// A single custom HTTP header entry in the Settings UI. Identified for SwiftUI
+/// `ForEach`; compared by content for `Equatable` so `onChange` detects edits.
+struct CustomHeaderEntry: Identifiable, Equatable {
+    var id = UUID()
+    var key: String
+    var value: String
+}
+
 struct SettingsProTab: View {
     @Environment(NodeAppModel.self) var appModel
     @Environment(VoiceWakeManager.self) var voiceWake
@@ -43,6 +51,7 @@ struct SettingsProTab: View {
     @State var gatewayPassword = ""
     @State var gatewayProxyUsername = ""
     @State var gatewayProxyPassword = ""
+    @State var customHeaders: [CustomHeaderEntry] = []
     @State var manualGatewayPortText = ""
     @State var setupStatusText: String?
     @State var stagedGatewaySetupLink: GatewayConnectDeepLink?
@@ -173,6 +182,9 @@ struct SettingsProTab: View {
             }
             .onChange(of: self.gatewayProxyPassword) { _, _ in
                 self.persistGatewayProxyBasicAuth()
+            }
+            .onChange(of: self.customHeaders) { _, _ in
+                self.persistGatewayCustomHeaders()
             }
             .onChange(of: self.setupCode) { _, newValue in
                 if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

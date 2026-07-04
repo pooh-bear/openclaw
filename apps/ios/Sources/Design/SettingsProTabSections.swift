@@ -849,6 +849,36 @@ extension SettingsProTab {
                     .textFieldStyle(.roundedBorder)
                 SecureField("Proxy Password", text: self.$gatewayProxyPassword)
                     .textFieldStyle(.roundedBorder)
+                Text("Custom Headers (optional)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                ForEach(self.$customHeaders) { $entry in
+                    HStack(spacing: 8) {
+                        TextField("Name", text: $entry.key)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Value", text: $entry.value)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            withAnimation { self.customHeaders.removeAll { $0.id == entry.id } }
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Button {
+                    withAnimation { self.customHeaders.append(CustomHeaderEntry(key: "", value: "")) }
+                } label: {
+                    Label("Add Header", systemImage: "plus")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 Button(role: .destructive) {
                     self.showResetOnboardingAlert = true
                 } label: {

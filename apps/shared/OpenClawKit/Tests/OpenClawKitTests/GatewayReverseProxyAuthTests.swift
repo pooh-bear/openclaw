@@ -115,4 +115,50 @@ struct GatewayReverseProxyAuthTests {
 
         #expect(session.capturedHeaders["Authorization"] == nil)
     }
+
+    @Test
+    func `channel forwards custom headers alongside basic auth`() async throws {
+        let session = HeaderCapturingSession()
+        let url = try #require(URL(string: "wss://gateway.example.test/openclaw"))
+        let customHeaders: [String: String] = [
+            "X-Custom-Auth": "token123",
+            "X-Forwarded-For": "10.0.0.1",
+        ]
+        let allHeaders = GatewayProxyAuth.basicAuthHeaders(username: "admin", password: "s3cr3t")
+            .merging(customHeaders, uniquingKeysWith: { _, new in new })
+        let channel = GatewayChannelActor(
+            url: url,
+            token: nil,
+            additionalHeaders: allHeaders,
+            session: WebSocketSessionBox(session: session))
+
+        _ = try? await channel.connect()
+        await channel.shutdown()
+
+        let expected = "Basic " + Data("admin:s3cr3t".utf8).base64EncodedString()
+        #expect(session.headerVariantCalls >= 1)
+        #expect(session.capturedHeaders["Authorization"] == expected)
+        #expect(session.capturedHeaders["X-Custom-Auth"] == "token123")
+        #expect(session.capturedHeaders["X-Forwarded-For"] == "10.0.0.1")
+    }
+
+    @Test
+    func `custom headers override basic auth on key collision`() async throws {
+        let session = HeaderCapturingSession()
+        let url = try #require(URL(string: "wss://gateway.example.test/openclaw"))
+        // Custom Authorization header should override the Basic auth one.
+        let allHeaders = GatewayProxyAuth.basicAuthHeaders(username: "admin", password: "s3cr3t")
+            .merging(["Authorization": "Bearer token123"], uniquingKeysWith: { _, new in new })
+        let channel = GatewayChannelActor(
+            url: url,
+            token: nil,
+            additionalHeaders: allHeaders,
+            session: WebSocketSessionBox(session: session))
+
+        _ = try? await channel.connect()
+        await channel.shutdown()
+
+        #expect(session.headerVariantCalls >= 1)
+        #expect(session.capturedHeaders["Authorization"] == "Bearer token123")
+    }
 }

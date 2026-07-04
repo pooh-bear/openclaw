@@ -224,6 +224,38 @@ enum GatewaySettingsStore {
         }
     }
 
+    /// Arbitrary custom HTTP headers for the WebSocket upgrade request. Stored as a
+    /// JSON dictionary in the Keychain so header values (which may contain secrets
+    /// like API keys or service tokens) are protected at rest. Entries with empty
+    /// keys are dropped on save because they are invalid HTTP header names.
+    static func loadGatewayCustomHeaders(instanceId: String) -> [String: String] {
+        guard let json = KeychainStore.loadString(
+            service: self.gatewayService,
+            account: self.gatewayCustomHeadersAccount(instanceId: instanceId)),
+            let data = json.data(using: .utf8),
+            let dict = try? JSONDecoder().decode([String: String].self, from: data)
+        else { return [:] }
+        // Drop entries with empty keys on load (defensive; save already filters them).
+        return dict.filter { !$0.key.isEmpty }
+    }
+
+    static func saveGatewayCustomHeaders(_ headers: [String: String], instanceId: String) {
+        let filtered = headers.filter { !$0.key.isEmpty }
+        if filtered.isEmpty {
+            _ = KeychainStore.delete(
+                service: self.gatewayService,
+                account: self.gatewayCustomHeadersAccount(instanceId: instanceId))
+            return
+        }
+        guard let data = try? JSONEncoder().encode(filtered),
+              let json = String(data: data, encoding: .utf8)
+        else { return }
+        _ = KeychainStore.saveString(
+            json,
+            service: self.gatewayService,
+            account: self.gatewayCustomHeadersAccount(instanceId: instanceId))
+    }
+
     enum LastGatewayConnection: Equatable {
         case manual(host: String, port: Int, useTLS: Bool, stableID: String)
         case discovered(stableID: String, useTLS: Bool)
@@ -369,6 +401,9 @@ enum GatewaySettingsStore {
         _ = KeychainStore.delete(
             service: self.gatewayService,
             account: self.gatewayProxyPasswordAccount(instanceId: trimmed))
+        _ = KeychainStore.delete(
+            service: self.gatewayService,
+            account: self.gatewayCustomHeadersAccount(instanceId: trimmed))
     }
 
     static func loadGatewayClientIdOverride(stableID: String) -> String? {
@@ -433,6 +468,10 @@ enum GatewaySettingsStore {
 
     private static func gatewayProxyPasswordAccount(instanceId: String) -> String {
         "gateway-proxy-password.\(instanceId)"
+    }
+
+    private static func gatewayCustomHeadersAccount(instanceId: String) -> String {
+        "gateway-custom-headers.\(instanceId)"
     }
 
     private static func talkProviderApiKeyAccount(providerId: String) -> String {
