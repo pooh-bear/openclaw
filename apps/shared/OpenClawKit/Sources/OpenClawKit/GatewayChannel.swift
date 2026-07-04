@@ -153,7 +153,7 @@ func requestWithHeaders(url: URL, headers: [String: String]) -> URLRequest {
 /// fallback session when skipTLSPinning is on.
 final class GatewayRedirectBlockingSession: NSObject, URLSessionTaskDelegate, WebSocketSessioning, @unchecked Sendable {
     private let logger = Logger(subsystem: "ai.openclaw", category: "gateway")
-    private lazy var session: URLSession = {
+    lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
@@ -623,8 +623,9 @@ public actor GatewayChannelActor {
 
     /// Make a pre-flight HTTPS request to set reverse-proxy authentication
     /// cookies before the WebSocket upgrade. Some proxies (e.g., Cloudflare Access)
-    /// authenticate service token headers on the first request and set a session
-    /// cookie (CF_Authorization); the WebSocket upgrade must carry that cookie.
+    /// return a 302 redirect with the CF_Authorization cookie, then the final 200
+    /// only has CF_Session. We must cancel the redirect to capture CF_Authorization
+    /// from the 302 response.
     ///
     /// iOS HTTPCookieStorage may not store the CF_Authorization cookie (e.g., it
     /// can reject SameSite=None cookies without a Domain attribute). So we parse
@@ -652,17 +653,19 @@ public actor GatewayChannelActor {
         for (field, value) in self.additionalHeaders {
             request.setValue(value, forHTTPHeaderField: field)
         }
-        // Disable automatic cookie handling so URLSession leaves Set-Cookie
-        // headers in allHeaderFields. We parse CF_Authorization ourselves because
-        // HTTPCookieStorage rejects SameSite=None cookies without a Domain attribute.
+        // Disable cookie handling so Set-Cookie headers stay in allHeaderFields
+        // for manual parsing. Use a redirect-blocking session so we capture the
+        // 302 response (which carries CF_Authorization) instead of the final 200
+        // (which only carries CF_Session from the origin).
         request.httpShouldHandleCookies = false
+        let preflightSession = GatewayRedirectBlockingSession()
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await preflightSession.session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             self.logger.info("proxy preflight status=\(status, privacy: .public) url=\(preflightURL.absoluteString, privacy: .public)")
             // Extract CF_Authorization from Set-Cookie headers directly.
-            // iOS HTTPCookieStorage may reject SameSite=None cookies without
-            // a Domain attribute, so we parse the header ourselves.
+            // CF Access sets CF_Authorization on the 302 response; by cancelling
+            // the redirect we see that response instead of the final 200.
             if let httpResponse = response as? HTTPURLResponse {
                 // Log the Set-Cookie value (truncated for privacy) to diagnose parsing.
                 if let setCookie = httpResponse.allHeaderFields["Set-Cookie"] {
