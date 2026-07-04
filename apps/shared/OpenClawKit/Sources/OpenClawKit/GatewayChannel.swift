@@ -377,6 +377,11 @@ public actor GatewayChannelActor {
     private var connected = false
     private var isConnecting = false
     private var connectWaiters: [CheckedContinuation<Void, Error>] = []
+    /// CF_Authorization cookie extracted from the pre-flight HTTPS response.
+    /// Set by preflightProxyAuth(), included in the WebSocket upgrade Cookie header
+    /// by requestWithHeaders(). iOS HTTPCookieStorage may reject this cookie due to
+    /// SameSite=None without a Domain attribute, so we store and inject it manually.
+    private var proxyCookie: (name: String, value: String)?
     private var url: URL
     private var token: String?
     private var bootstrapToken: String?
@@ -517,6 +522,9 @@ public actor GatewayChannelActor {
         self.isConnecting = true
         defer { self.isConnecting = false }
 
+        // Clear stale proxy cookie from previous connection attempts.
+        self.proxyCookie = nil
+
         self.task?.cancel(with: .goingAway, reason: nil)
         let headerKeys = self.additionalHeaders.keys.sorted()
         self.logger.info("ws upgrade headers=\(headerKeys, privacy: .public)")
@@ -532,7 +540,20 @@ public actor GatewayChannelActor {
             await self.preflightProxyAuth()
         }
 
-        self.task = self.session.makeWebSocketTask(url: self.url, headers: self.additionalHeaders)
+        // Merge proxy cookie (e.g., CF_Authorization from pre-flight) into headers.
+        // This is needed because iOS HTTPCookieStorage may reject SameSite=None
+        // cookies without a Domain attribute, so we inject the cookie directly.
+        var upgradeHeaders = self.additionalHeaders
+        if let proxyCookie = self.proxyCookie {
+            let cookieValue = "\(proxyCookie.name)=\(proxyCookie.value)"
+            if let existing = upgradeHeaders["Cookie"] {
+                upgradeHeaders["Cookie"] = "\(existing); \(cookieValue)"
+            } else {
+                upgradeHeaders["Cookie"] = cookieValue
+            }
+        }
+
+        self.task = self.session.makeWebSocketTask(url: self.url, headers: upgradeHeaders)
         self.task?.resume()
         do {
             try await AsyncTimeout.withTimeout(
@@ -604,8 +625,11 @@ public actor GatewayChannelActor {
     /// cookies before the WebSocket upgrade. Some proxies (e.g., Cloudflare Access)
     /// authenticate service token headers on the first request and set a session
     /// cookie (CF_Authorization); the WebSocket upgrade must carry that cookie.
-    /// Uses URLSession.shared so the cookie lands in HTTPCookieStorage.shared,
-    /// which the default URLSessionConfiguration also reads.
+    ///
+    /// iOS HTTPCookieStorage may not store the CF_Authorization cookie (e.g., it
+    /// can reject SameSite=None cookies without a Domain attribute). So we parse
+    /// the Set-Cookie headers directly and store the CF_Authorization value in
+    /// self.proxyCookie for manual inclusion on the WebSocket upgrade request.
     private func preflightProxyAuth() async {
         // Convert wss:// → https:// (or ws:// → http://) for the pre-flight.
         var components = URLComponents(url: self.url, resolvingAgainstBaseURL: false)
@@ -629,30 +653,53 @@ public actor GatewayChannelActor {
             request.setValue(value, forHTTPHeaderField: field)
         }
         // When service token headers are valid, CF Access authenticates directly
-        // (200 + CF_Authorization cookie) without redirecting. URLSession.shared
-        // follows redirects, but the cookie is only set on the correct domain
-        // when CF Access responds with 200.
+        // (200 + CF_Authorization cookie) without redirecting.
         request.httpShouldHandleCookies = true
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             self.logger.info("proxy preflight status=\(status, privacy: .public) url=\(preflightURL.absoluteString, privacy: .public)")
-            // Log cookies set by the pre-flight so we can diagnose missing cookies.
-            let allCookies = HTTPCookieStorage.shared.cookies(for: preflightURL) ?? []
-            let cookieNames = allCookies.map { $0.name }.sorted()
-            self.logger.info("proxy preflight cookies=\(cookieNames, privacy: .public) domain=\(preflightURL.host ?? "nil", privacy: .public)")
-            // Also log response Set-Cookie headers for debugging storage issues.
+            // Extract CF_Authorization from Set-Cookie headers directly.
+            // iOS HTTPCookieStorage may reject SameSite=None cookies without
+            // a Domain attribute, so we parse the header ourselves.
             if let httpResponse = response as? HTTPURLResponse {
-                // allHeaderFields may combine Set-Cookie values with commas.
-                // Check for both single and combined formats.
-                if let setCookieValue = httpResponse.allHeaderFields["Set-Cookie"] as? String {
-                    let count = setCookieValue.components(separatedBy: ", ").filter { $0.contains("=") }.count
-                    self.logger.info("proxy preflight set-cookie-raw-count=\(count, privacy: .public)")
+                self.proxyCookie = Self.parseSetCookieAuthorization(httpResponse.allHeaderFields)
+                if let proxyCookie = self.proxyCookie {
+                    self.logger.info("proxy preflight extracted cookie \(proxyCookie.name, privacy: .public)")
+                } else {
+                    self.logger.info("proxy preflight no CF_Authorization in Set-Cookie")
                 }
             }
         } catch {
             self.logger.info("proxy preflight error=\(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Parse Set-Cookie headers from an HTTP response to extract the
+    /// CF_Authorization cookie value. Returns the cookie name and value,
+    /// or nil if not found.
+    private static func parseSetCookieAuthorization(_ headers: [AnyHashable: Any]) -> (name: String, value: String)? {
+        // allHeaderFields can represent Set-Cookie as a String (single) or
+        // [String] (multiple). Handle both cases.
+        let setCookieValues: [String]
+        if let single = headers["Set-Cookie"] as? String {
+            setCookieValues = [single]
+        } else if let array = headers["Set-Cookie"] as? [String] {
+            setCookieValues = array
+        } else {
+            return nil
+        }
+        for cookieString in setCookieValues {
+            // Split on ";" to get the name=value part (attributes follow).
+            let nameValue = cookieString.split(separator: ";", omittingEmptySubsequences: false).first
+            guard let nameValue, let eq = nameValue.firstIndex(of: "=") else { continue }
+            let name = String(nameValue[..<eq]).trimmingCharacters(in: .whitespaces)
+            if name == "CF_Authorization" {
+                let value = String(nameValue[eq...].dropFirst()).trimmingCharacters(in: .whitespaces)
+                return (name: name, value: value)
+            }
+        }
+        return nil
     }
 
     private func sendConnect() async throws {
